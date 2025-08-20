@@ -13,9 +13,6 @@ const openai = new OpenAI({
 
 app.use(express.urlencoded({ extended: false }))
 
-// Serve static audio files
-app.use('/audio', express.static(__dirname))
-
 // Menyimpan konteks percakapan untuk setiap call
 const conversations = new Map()
 
@@ -57,45 +54,6 @@ FLOW PERCAKAPAN:
 
 PENTING: Setiap respons harus terdengar seperti orang Indonesia laki-laki asli berbicara, bukan terjemahan.`
 
-// Fungsi untuk generate audio menggunakan Deepgram REST API
-async function generateDeepgramAudio(text, callSid) {
-    try {
-        console.log("🔊 Generating audio with Deepgram TTS:", text)
-        
-        const response = await axios({
-            method: 'post',
-            url: 'https://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=wav&sample_rate=8000',
-            headers: {
-                'Authorization': `Token ${process.env.DEEPGRAM_API_KEY}`,
-                'Content-Type': 'application/json'
-            },
-            data: {
-                text: text
-            },
-            responseType: 'arraybuffer',
-            timeout: 10000
-        })
-
-        // Simpan audio file
-        const audioPath = path.join(__dirname, `deepgram_${callSid}_${Date.now()}.wav`)
-        fs.writeFileSync(audioPath, response.data)
-        
-        console.log(`🎵 Audio saved to: ${audioPath}`)
-        return audioPath
-        
-    } catch (error) {
-        console.error("❌ Deepgram TTS error:", error.message)
-        throw error
-    }
-}
-
-// Fungsi untuk upload audio ke server yang bisa diakses Twilio
-function getAudioUrl(audioPath) {
-    const fileName = path.basename(audioPath)
-    const baseUrl = process.env.BASE_URL || 'https://your-ngrok-url.ngrok.io'
-    return `${baseUrl}/audio/${fileName}`
-}
-
 // Fungsi filter untuk memastikan bahasa Indonesia murni
 function filterToIndonesian(text) {
     const replacements = {
@@ -134,39 +92,13 @@ app.post("/voice/answer", async (req, res) => {
     
     const greetingText = "Selamat pagi, bisa bicara dengan Bapak atau Ibu? Saya Agent dari AXA Mandiri, boleh meluangkan waktunya sebentar?"
     
-    try {
-        // Coba generate audio menggunakan Deepgram
-        if (process.env.DEEPGRAM_API_KEY) {
-            console.log("🔊 Trying Deepgram TTS...")
-            const audioPath = await generateDeepgramAudio(greetingText, callSid)
-            const audioUrl = getAudioUrl(audioPath)
-            
-            // Play audio dari Deepgram
-            response.play(audioUrl)
-            
-            // Cleanup audio file setelah 2 menit
-            setTimeout(() => {
-                if (fs.existsSync(audioPath)) {
-                    fs.unlinkSync(audioPath)
-                    console.log(`🗑️ Cleaned up audio file: ${audioPath}`)
-                }
-            }, 120000)
-        } else {
-            throw new Error("Deepgram API key not found")
-        }
-        
-    } catch (error) {
-        console.error("❌ Error generating Deepgram audio:", error.message)
-        console.log("🔄 Falling back to Twilio voice...")
-        
-        // Fallback ke Twilio voice
-        response.say(greetingText, {
-            voice: "man",
-            language: "id-ID",
-            rate: "85%",
-            pitch: "-5%"
-        })
-    }
+    // Menggunakan Twilio voice
+    response.say(greetingText, {
+        voice: "man",
+        language: "id-ID",
+        rate: "85%",
+        pitch: "-5%"
+    })
     
     // Langsung ke recording
     response.redirect("/voice/listen")
@@ -341,36 +273,13 @@ app.post("/voice/process-speech", async (req, res) => {
         // Update conversation context
         conversations.set(callSid, conversation)
         
-        try {
-            // Generate audio response menggunakan Deepgram
-            if (process.env.DEEPGRAM_API_KEY) {
-                const responseAudioPath = await generateDeepgramAudio(aiResponse, callSid)
-                const responseAudioUrl = getAudioUrl(responseAudioPath)
-                
-                // Play AI response menggunakan Deepgram audio
-                response.play(responseAudioUrl)
-                
-                // Cleanup after 2 minutes
-                setTimeout(() => {
-                    if (fs.existsSync(responseAudioPath)) {
-                        fs.unlinkSync(responseAudioPath)
-                        console.log(`🗑️ Cleaned up response audio: ${responseAudioPath}`)
-                    }
-                }, 120000)
-            } else {
-                throw new Error("Deepgram API key not found")
-            }
-            
-        } catch (deepgramError) {
-            console.error("❌ Deepgram TTS failed, using Twilio fallback:", deepgramError.message)
-            // Fallback ke Twilio voice
-            response.say(aiResponse, {
-                voice: "man",
-                language: "id-ID",
-                rate: "85%",
-                pitch: "-5%"
-            })
-        }
+        // Menggunakan Twilio voice untuk respons AI
+        response.say(aiResponse, {
+            voice: "man",
+            language: "id-ID",
+            rate: "85%",
+            pitch: "-5%"
+        })
         
         // Continue or end call prompt
         response.gather({
@@ -439,56 +348,22 @@ app.post("/voice/continue", async (req, res) => {
     if (digit === "1") {
         const continueText = "Baik, silakan lanjutkan berbicara."
         
-        try {
-            if (process.env.DEEPGRAM_API_KEY) {
-                const audioPath = await generateDeepgramAudio(continueText, callSid)
-                const audioUrl = getAudioUrl(audioPath)
-                
-                response.play(audioUrl)
-                
-                setTimeout(() => {
-                    if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath)
-                }, 60000)
-            } else {
-                throw new Error("Deepgram API key not found")
-            }
-            
-        } catch (error) {
-            console.error("❌ Deepgram error in continue:", error.message)
-            response.say(continueText, {
-                voice: "man",
-                language: "id-ID",
-                rate: "85%"
-            })
-        }
+        response.say(continueText, {
+            voice: "man",
+            language: "id-ID",
+            rate: "85%"
+        })
         
         response.redirect("/voice/listen")
         
     } else if (digit === "2") {
         const goodbyeText = "Terima kasih sudah berbicara dengan saya. Sampai jumpa!"
         
-        try {
-            if (process.env.DEEPGRAM_API_KEY) {
-                const audioPath = await generateDeepgramAudio(goodbyeText, callSid)
-                const audioUrl = getAudioUrl(audioPath)
-                
-                response.play(audioUrl)
-                
-                setTimeout(() => {
-                    if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath)
-                }, 60000)
-            } else {
-                throw new Error("Deepgram API key not found")
-            }
-            
-        } catch (error) {
-            console.error("❌ Deepgram error in goodbye:", error.message)
-            response.say(goodbyeText, {
-                voice: "man",
-                language: "id-ID",
-                rate: "85%"
-            })
-        }
+        response.say(goodbyeText, {
+            voice: "man",
+            language: "id-ID",
+            rate: "85%"
+        })
         
         response.hangup()
     } else {
@@ -536,11 +411,10 @@ app.use((error, req, res, next) => {
 })
 
 app.listen(3000, () => {
-    console.log("🚀 Enhanced Voice AI server with Deepgram TTS running at http://localhost:3000")
-    console.log("🔊 Deepgram API Key:", process.env.DEEPGRAM_API_KEY ? "✅ Found" : "❌ Missing")
+    console.log("🚀 Voice AI server running at http://localhost:3000")
     console.log("🤖 OpenAI API Key:", process.env.OPENAI_API_KEY ? "✅ Found" : "❌ Missing")
     console.log("📱 Twilio Account SID:", process.env.TWILIO_ACCOUNT_SID ? "✅ Found" : "❌ Missing")
-    console.log("🌐 Base URL:", process.env.BASE_URL || "❌ Not set - using fallback")
+    console.log("🔑 Twilio Auth Token:", process.env.TWILIO_AUTH_TOKEN ? "✅ Found" : "❌ Missing")
     console.log("📋 Available endpoints:")
     console.log("  - POST /voice/answer")
     console.log("  - POST /voice/listen") 
@@ -548,5 +422,4 @@ app.listen(3000, () => {
     console.log("  - POST /voice/continue")
     console.log("  - POST /voice/status")
     console.log("  - POST /voice/hangup")
-    console.log("  - GET /audio/:filename (for serving audio files)")
 })
